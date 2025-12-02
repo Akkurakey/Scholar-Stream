@@ -1,0 +1,5 @@
+{
+  "name": "ScholarStream",
+  "description": "A personalized scientific paper feed aggregator with day/night mode, topic subscription, and keyword filtering.",
+  "requestFramePermissions": []
+}
