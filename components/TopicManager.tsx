@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Topic } from '../types';
+import { Topic, ViewMode } from '../types';
 import { Zap, ChevronRight, ChevronDown, Settings } from 'lucide-react';
 
 interface TopicManagerProps {
   topics: Topic[];
   activeTopicId: string | null;
+  viewMode: ViewMode;
   onSelectTopic: (id: string | null) => void;
   onManage: () => void;
 }
@@ -12,10 +13,17 @@ interface TopicManagerProps {
 const TopicManager: React.FC<TopicManagerProps> = ({ 
   topics, 
   activeTopicId, 
+  viewMode,
   onSelectTopic,
   onManage
 }) => {
   const [isExpanded, setIsExpanded] = useState(true);
+
+  // Helper to check if Explore is effectively selected
+  const isExploreActive = activeTopicId === null && viewMode === ViewMode.FEED;
+
+  // Helper to check if a specific topic is active
+  const isTopicActive = (id: string) => activeTopicId === id && viewMode === ViewMode.FEED;
 
   return (
     <div className="flex flex-col h-full">
@@ -42,13 +50,13 @@ const TopicManager: React.FC<TopicManagerProps> = ({
         <button
           onClick={() => onSelectTopic(null)}
           className={`w-full text-left px-3 py-3 rounded-xl text-sm font-medium transition-all duration-200 flex items-center gap-3 group ${
-            activeTopicId === null
+            isExploreActive
               ? 'bg-gradient-to-r from-primary-600 to-primary-500 text-white shadow-lg shadow-primary-500/20'
               : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-zinc-900'
           }`}
         >
-          <div className={`p-1.5 rounded-lg ${activeTopicId === null ? 'bg-white/20' : 'bg-gray-100 dark:bg-zinc-800 group-hover:bg-white dark:group-hover:bg-black transition-colors'}`}>
-             <Zap size={14} className={activeTopicId === null ? "text-white" : "text-amber-500"} fill={activeTopicId === null ? "currentColor" : "currentColor"} />
+          <div className={`p-1.5 rounded-lg ${isExploreActive ? 'bg-white/20' : 'bg-gray-100 dark:bg-zinc-800 group-hover:bg-white dark:group-hover:bg-black transition-colors'}`}>
+             <Zap size={14} className={isExploreActive ? "text-white" : "text-amber-500"} fill={isExploreActive ? "currentColor" : "currentColor"} />
           </div>
           <span className="flex-1">Explore</span>
         </button>
@@ -63,32 +71,35 @@ const TopicManager: React.FC<TopicManagerProps> = ({
             {isExpanded ? <ChevronDown size={12} className="text-gray-400"/> : <ChevronRight size={12} className="text-gray-400"/>}
         </div>
 
-        {isExpanded && topics.map(topic => (
-          <button
-            key={topic.id}
-            onClick={() => onSelectTopic(topic.id)}
-            className={`w-full flex items-center text-left px-3 py-2.5 rounded-xl transition-all duration-200 border ${
-              activeTopicId === topic.id
-                ? 'bg-white dark:bg-zinc-900 border-primary-100 dark:border-zinc-700 shadow-sm'
-                : 'hover:bg-gray-50 dark:hover:bg-zinc-900/50 border-transparent text-gray-500 dark:text-gray-500'
-            }`}
-          >
-            <div className="flex-1 min-w-0">
-              <div className={`font-semibold text-xs truncate flex items-center gap-2 ${activeTopicId === topic.id ? 'text-primary-600 dark:text-primary-400' : 'text-gray-700 dark:text-gray-300'}`}>
-                  {topic.subCategory || topic.category}
+        {isExpanded && topics.map(topic => {
+          const isActive = isTopicActive(topic.id);
+          return (
+            <button
+              key={topic.id}
+              onClick={() => onSelectTopic(topic.id)}
+              className={`w-full flex items-center text-left px-3 py-2.5 rounded-xl transition-all duration-200 border ${
+                isActive
+                  ? 'bg-white dark:bg-zinc-900 border-primary-100 dark:border-zinc-700 shadow-sm'
+                  : 'hover:bg-gray-50 dark:hover:bg-zinc-900/50 border-transparent text-gray-500 dark:text-gray-500'
+              }`}
+            >
+              <div className="flex-1 min-w-0">
+                <div className={`font-semibold text-xs truncate flex items-center gap-2 ${isActive ? 'text-primary-600 dark:text-primary-400' : 'text-gray-700 dark:text-gray-300'}`}>
+                    {topic.subCategory || topic.category}
+                </div>
+                {topic.keywords.length > 0 ? (
+                    <div className="text-[10px] text-primary-500/80 truncate mt-0.5 font-medium">
+                        Filter: {topic.keywords.join(', ')}
+                    </div>
+                ) : (
+                    <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate mt-0.5">
+                        {topic.category}
+                    </div>
+                )}
               </div>
-              {topic.keywords.length > 0 ? (
-                  <div className="text-[10px] text-primary-500/80 truncate mt-0.5 font-medium">
-                      Filter: {topic.keywords.join(', ')}
-                  </div>
-              ) : (
-                  <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate mt-0.5">
-                      {topic.category}
-                  </div>
-              )}
-            </div>
-          </button>
-        ))}
+            </button>
+          );
+        })}
         
         {isExpanded && topics.length === 0 && (
             <div className="px-3 py-4 text-center">
