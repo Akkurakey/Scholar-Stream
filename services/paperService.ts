@@ -7,7 +7,7 @@ const cleanTerm = (t: string) => t.replace(/["\\]/g, '').trim();
 
 // STRICT MAPPING: Human Readable Subcategory Name -> Official ArXiv Code
 // Source: https://arxiv.org/category_taxonomy
-const SUB_CATEGORY_TO_CODE: Record<string, string> = {
+export const SUB_CATEGORY_TO_CODE: Record<string, string> = {
     // Computer Science
     "Artificial Intelligence": "cs.AI",
     "Hardware Architecture": "cs.AR",
@@ -149,7 +149,7 @@ const CODE_TO_SUB_CATEGORY: Record<string, string> = Object.entries(SUB_CATEGORY
 }, {} as Record<string, string>);
 
 
-const getCategoryCode = (topic: Topic): string => {
+export const getCategoryCode = (topic: Topic): string => {
     if (topic.subCategory) {
         if (topic.subCategory === "Systems and Control" && topic.category === "Electrical Engineering and Systems Science") {
              return "eess.SY";
@@ -162,13 +162,28 @@ const getCategoryCode = (topic: Topic): string => {
     return "";
 };
 
+// Helper: Construct single topic query part
+const buildTopicQuery = (topic: Topic): string => {
+    const code = getCategoryCode(topic);
+    const base = code ? `cat:${code}` : `all:"${cleanTerm(topic.subCategory || topic.category)}"`;
+    
+    // If topic has specific keywords, we want papers that match the Category AND (Keyword1 OR Keyword2)
+    if (topic.keywords.length > 0) {
+        const keywordQuery = topic.keywords.map(k => `all:"${cleanTerm(k)}"`).join(" OR ");
+        return `(${base} AND (${keywordQuery}))`;
+    }
+    
+    return base;
+};
+
 // Reusable fetcher for a constructed ArXiv Query String
 const executeArxivQuery = async (searchQuery: string, start: number, maxResults: number, signal?: AbortSignal, associatedTopicId?: string): Promise<Paper[]> => {
+    if (!searchQuery) return [];
+
     // Sort by submittedDate descending (newest first)
     const baseApiUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=${start}&max_results=${maxResults}&sortBy=submittedDate&sortOrder=descending`;
 
     // Proxy strategy to handle CORS
-    // ArXiv export URL generally handles CORS, but can be slow or blocked by some networks.
     const endpoints = [
         baseApiUrl,
         `https://api.allorigins.win/raw?url=${encodeURIComponent(baseApiUrl)}`,
@@ -178,8 +193,6 @@ const executeArxivQuery = async (searchQuery: string, start: number, maxResults:
     const performFetch = async (attempt: number): Promise<Paper[]> => {
         try {
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-            
-            // Reduced backoff time for faster UX (300ms instead of 1000ms)
             if (attempt > 0) await wait(300 * attempt); 
             
             const response = await fetch(endpoints[attempt], { signal });
@@ -208,7 +221,11 @@ const executeArxivQuery = async (searchQuery: string, start: number, maxResults:
                 const published = getText("published").split('T')[0];
                 const primaryCatCode = entry.getElementsByTagName("arxiv:primary_category")[0]?.getAttribute("term") || "";
                 
-                // Translate Code (e.g., cs.CV) -> Readable Name (e.g., Computer Vision)
+                // EXTRACT ALL TAGS
+                const allCategories = Array.from(entry.getElementsByTagName("category"));
+                const tags = allCategories.map(c => c.getAttribute("term") || "").filter(t => t);
+                // Ensure primary is first or present, though ArXiv usually lists it. The 'tags' array now contains all codes.
+
                 const humanReadableCategory = CODE_TO_SUB_CATEGORY[primaryCatCode] || primaryCatCode;
 
                 return {
@@ -221,7 +238,7 @@ const executeArxivQuery = async (searchQuery: string, start: number, maxResults:
                     publishDate: published, 
                     doi: "", 
                     url: idRaw,
-                    tags: [primaryCatCode],
+                    tags: tags,
                     topicId: associatedTopicId || "aggregated"
                 };
             });
@@ -239,26 +256,7 @@ const executeArxivQuery = async (searchQuery: string, start: number, maxResults:
 
 // Fetch for a single topic
 export const fetchPapersForTopic = async (topic: Topic, excludeTitles: string[] = [], signal?: AbortSignal): Promise<Paper[]> => {
-    const queryParts: string[] = [];
-    const officialCode = getCategoryCode(topic);
-
-    if (officialCode) {
-        queryParts.push(`cat:${officialCode}`);
-    } else {
-        if (topic.subCategory) queryParts.push(`all:"${cleanTerm(topic.subCategory)}"`);
-        else queryParts.push(`all:"${cleanTerm(topic.category)}"`);
-    }
-    
-    // Add Keywords
-    const keywordTerms: string[] = [];
-    topic.keywords.forEach(k => { if(k) keywordTerms.push(`all:"${cleanTerm(k)}"`) });
-    
-    if (keywordTerms.length > 0) {
-        queryParts.push(...keywordTerms);
-    }
-
-    const searchQuery = queryParts.join(" AND ");
-    
+    const searchQuery = buildTopicQuery(topic);
     const newPapers = await executeArxivQuery(searchQuery, excludeTitles.length, 8, signal, topic.id);
 
     // Deduplicate
@@ -278,93 +276,84 @@ export const fetchPapersForTopic = async (topic: Topic, excludeTitles: string[] 
     );
 };
 
-// Generate AI keywords for better discovery
-const getAiEnhancedKeywords = async (topics: Topic[], bookmarks: Paper[]): Promise<string[]> => {
-    // If no API key or no significant data, skip
-    if (!process.env.API_KEY || (topics.length === 0 && bookmarks.length === 0)) return [];
+// Generate AI query for better discovery
+const getAiEnhancedQuery = async (topics: Topic[], bookmarks: Paper[]): Promise<string | null> => {
+    if (!process.env.API_KEY || (topics.length === 0 && bookmarks.length === 0)) return null;
 
     try {
         const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
         
-        // Prepare context
-        const topicNames = topics.map(t => t.subCategory || t.category).slice(0, 5).join(", ");
-        const bookmarkTitles = bookmarks.map(b => b.title).slice(0, 3).join("; ");
+        const topicContext = topics.slice(0, 5).map(t => {
+            const code = getCategoryCode(t);
+            return code ? `${t.subCategory}(${code})` : t.category;
+        }).join(", ");
         
+        const bookmarkContext = bookmarks.slice(0, 3).map(b => `"${b.title}"`).join("; ");
+        
+        // Ask for a COMPLETE ArXiv query string to avoid logic errors
         const prompt = `
-            Based on these research interests: [${topicNames}] 
-            and these recently bookmarked papers: [${bookmarkTitles}],
-            generate 3 highly specific, technical search phrases (keywords only, no explanations) 
-            to find relevant new scientific papers on ArXiv.
+            Context: User follows [${topicContext}] and liked [${bookmarkContext}].
+            Task: Create a SINGLE ArXiv API search query (using 'all:', 'cat:', 'AND', 'OR') to find NEW, RELEVANT papers.
+            Constraints: 
+            1. Query must be specific to their technical interests.
+            2. Do NOT use broad terms like "all:learning" alone. Combine with category (e.g. cat:cs.AI AND all:"transformer").
+            3. Return ONLY the raw query string, no JSON, no quotes.
         `;
 
         const response = await ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
-            config: {
-                responseMimeType: "application/json",
-                responseSchema: {
-                    type: Type.ARRAY,
-                    items: { type: Type.STRING }
-                }
-            }
         });
         
-        const jsonText = response.text || "[]";
-        const keywords = JSON.parse(jsonText);
-        return Array.isArray(keywords) ? keywords.slice(0, 3) : [];
+        let query = response.text?.trim() || "";
+        // Basic cleanup
+        query = query.replace(/^`+|`+$/g, '').trim();
+        return query.length > 5 ? query : null;
         
     } catch (e) {
-        console.warn("AI keyword generation failed", e);
-        return [];
+        console.warn("AI query generation failed", e);
+        return null;
     }
 }
 
-// Fetch aggregated papers from ALL subscribed topics + AI enhancement
+// Fetch aggregated papers using "Split Fetch" strategy
 export const fetchAggregatedPapers = async (topics: Topic[], bookmarkedPapers: Paper[] = [], excludeTitles: string[] = [], signal?: AbortSignal): Promise<Paper[]> => {
     if (topics.length === 0) return [];
 
-    // 1. Construct standard category query
-    const categoryTerms: string[] = [];
-    
-    topics.forEach(topic => {
-        const code = getCategoryCode(topic);
-        if (code) {
-             categoryTerms.push(`cat:${code}`);
-        } else {
-             const term = topic.subCategory || topic.category;
-             categoryTerms.push(`all:"${cleanTerm(term)}"`);
-        }
-    });
+    // Strategy: 
+    // 1. "Subscription Feed": Pick 4 random topics to ensure diversity and rotation. 
+    //    Querying ALL topics at once creates massive queries that fail or return only the highest volume category.
+    const shuffledTopics = [...topics].sort(() => 0.5 - Math.random());
+    const selectedTopics = shuffledTopics.slice(0, 4);
 
-    // 2. Get AI Suggested Keywords (Optional, parallel fetch if possible but here sequential for simplicity/stability)
-    let aiKeywords: string[] = [];
-    // Only fetch AI keywords if we have bookmarks to guide it, or purely based on topics if bookmarks are empty
-    // To save latency, only do this if not aborted
-    if (!signal?.aborted) {
-        // We do a "fire and forget" style or small timeout race could be better, but let's just await quickly
-        // We only use AI if we have bookmarks to truly "personalize", otherwise categories are sufficient
-        if (bookmarkedPapers.length > 0) {
-             aiKeywords = await getAiEnhancedKeywords(topics, bookmarkedPapers);
-        }
+    const subscriptionQueryParts = selectedTopics.map(t => buildTopicQuery(t));
+    const subscriptionQuery = subscriptionQueryParts.length > 0 ? `(${subscriptionQueryParts.join(" OR ")})` : "";
+
+    // 2. "Discovery Feed": Use AI to construct a smart query if we have bookmarks, otherwise skip.
+    //    We run this as a SEPARATE fetch to ensure the "Recommended" papers don't get drowned out by the "Subscribed" papers' volume.
+    let discoveryQuery: string | null = null;
+    if (!signal?.aborted && bookmarkedPapers.length > 0) {
+        // Only run AI if we have bookmarks to base it on, otherwise random rotation of topics is enough "exploration".
+        discoveryQuery = await getAiEnhancedQuery(topics, bookmarkedPapers);
     }
 
-    // 3. Add AI keywords to the query pool
-    // Note: ArXiv "all" searches title and abstract.
-    aiKeywords.forEach(k => {
-        if(k) categoryTerms.unshift(`all:"${cleanTerm(k)}"`); // Add to front for priority
-    });
+    // 3. Execute Fetches in Parallel
+    // We fetch more results from Subscription (8) and fewer from Discovery (4) for a nice mix.
+    const [subResults, discoveryResults] = await Promise.all([
+        subscriptionQuery ? executeArxivQuery(subscriptionQuery, 0, 8, signal, "aggregated") : Promise.resolve([]),
+        discoveryQuery ? executeArxivQuery(discoveryQuery, 0, 4, signal, "ai_recommended") : Promise.resolve([])
+    ]);
 
-    // Limit query complexity.
-    const limitedTerms = categoryTerms.slice(0, 15); 
-    const searchQuery = limitedTerms.length > 0 ? `(${limitedTerms.join(" OR ")})` : "all:science";
+    // 4. Merge & Deduplicate
+    const allFetched = [...subResults, ...discoveryResults];
+    
+    // Tag AI papers so we could theoretically show them differently (optional, currently using generic card)
+    discoveryResults.forEach(p => p.topicId = "ai_recommended");
 
-    const newPapers = await executeArxivQuery(searchQuery, excludeTitles.length, 12, signal, "aggregated");
-
-    // Deduplicate
     const uniquePapers: Paper[] = [];
     const seenTitles = new Set(excludeTitles.map(t => t.toLowerCase().replace(/[^a-z0-9]/g, '')));
 
-    for (const p of newPapers) {
+    for (const p of allFetched) {
         const nTitle = p.title.toLowerCase().replace(/[^a-z0-9]/g, '');
         if (!seenTitles.has(nTitle)) {
             seenTitles.add(nTitle);
@@ -372,6 +361,7 @@ export const fetchAggregatedPapers = async (topics: Topic[], bookmarkedPapers: P
         }
     }
 
+    // Sort combined result by date
     return uniquePapers.sort((a, b) => 
         new Date(b.publishDate).getTime() - new Date(a.publishDate).getTime()
     );
