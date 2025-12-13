@@ -31,21 +31,25 @@ const DEFAULT_TOPICS: Topic[] = [
 ];
 
 const App: React.FC = () => {
-  // --- State Initialization with LocalStorage ---
+  // --- Helper: Safe JSON Parse ---
+  const safeParse = <T,>(key: string, fallback: T): T => {
+    try {
+      const saved = localStorage.getItem(key);
+      return saved ? JSON.parse(saved) : fallback;
+    } catch (e) {
+      console.warn(`Error parsing ${key} from localStorage`, e);
+      return fallback;
+    }
+  };
+
+  // --- State Initialization ---
 
   // 1. Dark Mode
-  const [darkMode, setDarkMode] = useState(() => {
-    const saved = localStorage.getItem('ss_theme');
-    return saved ? JSON.parse(saved) : false;
-  });
-
+  const [darkMode, setDarkMode] = useState<boolean>(() => safeParse('ss_theme', false));
   const [sidebarOpen, setSidebarOpen] = useState(false); 
   
   // 2. Topics
-  const [topics, setTopics] = useState<Topic[]>(() => {
-    const saved = localStorage.getItem('ss_topics');
-    return saved ? JSON.parse(saved) : DEFAULT_TOPICS;
-  });
+  const [topics, setTopics] = useState<Topic[]>(() => safeParse('ss_topics', DEFAULT_TOPICS));
 
   // 3. View Mode
   const [viewMode, setViewMode] = useState<ViewMode>(() => {
@@ -56,28 +60,21 @@ const App: React.FC = () => {
   // 4. Active Topic
   const [activeTopicId, setActiveTopicId] = useState<string | null>(() => {
     const saved = localStorage.getItem('ss_activeTopicId');
-    // If explicitly null string in storage, keep it null, otherwise check if valid
+    // Ensure we correctly interpret 'null' string vs null value
     if (saved === 'null') return null;
-    return saved || (DEFAULT_TOPICS[0]?.id || null);
+    return saved || null; // Default to null (Explore) initially if nothing saved
   });
 
-  // 5. Bookmarks (Set handling)
+  // 5. Bookmarks
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(() => {
-    const saved = localStorage.getItem('ss_bookmarks');
-    return saved ? new Set(JSON.parse(saved)) : new Set();
+    const saved = safeParse<string[]>('ss_bookmarks', []);
+    return new Set(saved);
   });
   
   // 6. Cache
-  const [papersCache, setPapersCache] = useState<Record<string, Paper[]>>(() => {
-    try {
-      const saved = localStorage.getItem('ss_cache');
-      return saved ? JSON.parse(saved) : {};
-    } catch (e) {
-      return {};
-    }
-  });
+  const [papersCache, setPapersCache] = useState<Record<string, Paper[]>>(() => safeParse('ss_cache', {}));
   
-  // Current display papers (derived or direct state)
+  // Current display papers
   const [papers, setPapers] = useState<Paper[]>([]);
   
   // Loading/Error State
@@ -88,9 +85,8 @@ const App: React.FC = () => {
   // Infinite Scroll Refs
   const observerTarget = useRef<HTMLDivElement>(null);
 
-  // --- Effects for Persistence ---
+  // --- Persistence Effects ---
 
-  // Persist Theme
   useEffect(() => {
     localStorage.setItem('ss_theme', JSON.stringify(darkMode));
     if (darkMode) {
@@ -100,54 +96,53 @@ const App: React.FC = () => {
     }
   }, [darkMode]);
 
-  // Persist Topics
   useEffect(() => {
     localStorage.setItem('ss_topics', JSON.stringify(topics));
   }, [topics]);
 
-  // Persist ViewMode & ActiveTopic
   useEffect(() => {
     localStorage.setItem('ss_viewMode', viewMode);
   }, [viewMode]);
 
   useEffect(() => {
-    // Stringify 'null' correctly or the ID
     localStorage.setItem('ss_activeTopicId', activeTopicId === null ? 'null' : activeTopicId);
   }, [activeTopicId]);
 
-  // Persist Bookmarks (Convert Set to Array)
   useEffect(() => {
     localStorage.setItem('ss_bookmarks', JSON.stringify([...bookmarkedIds]));
   }, [bookmarkedIds]);
 
-  // Persist Cache
   useEffect(() => {
     try {
       localStorage.setItem('ss_cache', JSON.stringify(papersCache));
     } catch (e) {
-      console.warn("Cache too large for localStorage, clearing old cache.");
-      // Simple fallback: if cache is full, we could clear it, or just not save. 
-      // For this demo, we'll try to just ignore the error.
+      console.warn("Cache limit reached or error saving cache", e);
     }
   }, [papersCache]);
 
+  // --- Validation Effect ---
+  // If the activeTopicId loaded from storage doesn't exist in the current topics list, reset to Explore.
+  useEffect(() => {
+      if (activeTopicId !== null) {
+          const exists = topics.find(t => t.id === activeTopicId);
+          if (!exists) {
+              setActiveTopicId(null);
+          }
+      }
+      // Only run on mount or when topics/id change
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topics.length, activeTopicId]); 
 
-  // --- Logic Effects ---
+  // --- Data Logic ---
 
-  // Fetch Papers Logic
-  // Accepts a signal to support cancelling obsolete requests (fixes React Strict Mode double-fetch)
   const fetchPapers = useCallback(async (isLoadMore: boolean = false, forceRefresh: boolean = false, signal?: AbortSignal) => {
-    // Determine the key for cache and logic
     const cacheKey = activeTopicId || "all";
     
-    // Validate we can fetch
+    // Safety check: if topic doesn't exist and not aggregated, don't fetch
     if (cacheKey !== "all" && !topics.find(t => t.id === activeTopicId)) return;
 
-    if (isLoadMore) {
-        setLoadingMore(true);
-    } else {
-        setInitialLoading(true);
-    }
+    if (isLoadMore) setLoadingMore(true);
+    else setInitialLoading(true);
     
     setError(null);
 
@@ -158,10 +153,8 @@ const App: React.FC = () => {
       let newPapers: Paper[] = [];
 
       if (cacheKey === "all") {
-          // Fetch Aggregated Feed
           newPapers = await fetchAggregatedPapers(topics, excludeTitles, signal);
       } else {
-          // Fetch Single Topic
           const topic = topics.find(t => t.id === activeTopicId)!;
           newPapers = await fetchPapersForTopic(topic, excludeTitles, signal);
       }
@@ -172,13 +165,7 @@ const App: React.FC = () => {
         // Deduplicate
         const existingIds = new Set(prevPapers.map(p => p.id));
         const uniqueNew = newPapers.filter(p => !existingIds.has(p.id));
-        
         const updatedList = [...prevPapers, ...uniqueNew];
-        
-        // Sync local papers state if we are still on the same view
-        if ((activeTopicId === null && cacheKey === "all") || (activeTopicId === cacheKey)) {
-            setPapers(updatedList);
-        }
         
         return {
             ...prevCache,
@@ -187,14 +174,10 @@ const App: React.FC = () => {
       });
 
     } catch (err: any) {
-      // Ignore AbortErrors (cancelled requests)
-      if (err.name === 'AbortError') {
-          return;
-      }
+      if (err.name === 'AbortError') return;
       console.error(err);
       setError("Unable to load papers. Please check your connection.");
     } finally {
-      // Only clear loading if we weren't aborted (if aborted, a new request is likely pending/active)
       if (!signal?.aborted) {
           setInitialLoading(false);
           setLoadingMore(false);
@@ -202,38 +185,39 @@ const App: React.FC = () => {
     }
   }, [activeTopicId, topics, papersCache]);
 
-  // Topic Change / Navigation Effect
+  // Sync 'papers' state with 'papersCache' + Auto-fetch if needed
   useEffect(() => {
     if (viewMode === ViewMode.FEED) {
        const cacheKey = activeTopicId || "all";
        const cachedPapers = papersCache[cacheKey];
 
-       // Check cache availability - Logic adjusted to prevent auto-refresh loop
-       if (cachedPapers && cachedPapers.length > 0) {
-           // CACHE HIT: Use cached data, do NOT fetch
+       // 1. If we have data in cache (even if empty array, meaning we fetched 0 results), show it.
+       if (cachedPapers !== undefined) {
            setPapers(cachedPapers);
            setInitialLoading(false);
            setError(null);
-       } else {
-           // CACHE MISS
+       } 
+       
+       // 2. If undefined (never fetched), trigger fetch
+       // We use a timeout to avoid strict-mode double invocation issues and debounce
+       if (cachedPapers === undefined) {
            setPapers([]); 
-           
            const controller = new AbortController();
-           
            const timeoutId = setTimeout(() => {
                 fetchPapers(false, false, controller.signal);
-           }, 500);
-           
+           }, 100);
            return () => {
                clearTimeout(timeoutId);
                controller.abort();
            };
        }
     }
+    // We intentionally include papersCache here so UI updates immediately when fetch completes
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeTopicId, viewMode]); 
+  }, [activeTopicId, viewMode, papersCache]); 
 
-  // Infinite Scroll Observer
+
+  // Infinite Scroll
   useEffect(() => {
     const observer = new IntersectionObserver(
       entries => {
@@ -249,9 +233,7 @@ const App: React.FC = () => {
     }
 
     return () => {
-      if (observerTarget.current) {
-        observer.unobserve(observerTarget.current);
-      }
+      if (observerTarget.current) observer.unobserve(observerTarget.current);
     };
   }, [initialLoading, loadingMore, error, viewMode, fetchPapers, papers.length]);
 
@@ -268,7 +250,7 @@ const App: React.FC = () => {
   };
 
   const handleManualRefresh = () => {
-      fetchPapers(false, true); // Force refresh
+      fetchPapers(false, true);
   };
 
   const handleAddTopic = (topic: Topic) => {
@@ -288,18 +270,20 @@ const App: React.FC = () => {
     // If we deleted the current topic, go to feed
     if (activeTopicId === id) {
         setActiveTopicId(null);
-        setPapers([]);
     }
   };
 
+  // Derive Displayed Papers
   const displayedPapers = (() => {
     let filtered = papers;
-    // In BOOKMARKS mode, show everything saved regardless of topic
+    
     if (viewMode === ViewMode.BOOKMARKS) {
-      // Need to find papers from ALL caches that are bookmarked
+      // Aggregate all known papers to find bookmarks (in case they aren't in current feed view)
       const allPapers = Object.values(papersCache).flat();
-      const combined = [...allPapers, ...papers];
-      const unique = Array.from(new Map(combined.map(p => [p.id, p])).values());
+      // Deduplicate by ID
+      const uniqueMap = new Map();
+      allPapers.forEach(p => uniqueMap.set(p.id, p));
+      const unique = Array.from(uniqueMap.values()) as Paper[];
       
       filtered = unique.filter(p => bookmarkedIds.has(p.id));
     }
@@ -308,7 +292,6 @@ const App: React.FC = () => {
 
   const activeTopic = topics.find(t => t.id === activeTopicId);
   
-  // Header Content
   let headerTitle = "Explore";
   let headerSubtitle = "Papers you might be interested in";
   
@@ -323,7 +306,6 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen bg-white dark:bg-black overflow-hidden font-sans text-gray-900 dark:text-gray-100 selection:bg-primary-500/30">
       
-      {/* Mobile Sidebar Overlay */}
       {sidebarOpen && (
         <div 
           className="fixed inset-0 bg-black/60 backdrop-blur-sm z-30 md:hidden transition-opacity"
@@ -331,14 +313,12 @@ const App: React.FC = () => {
         />
       )}
 
-      {/* Sidebar Navigation */}
       <aside className={`
         fixed md:relative z-40 w-72 h-full transform transition-transform duration-300 ease-in-out
         ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
         md:translate-x-0
         flex flex-col bg-white dark:bg-black border-r border-gray-100 dark:border-zinc-900
       `}>
-        {/* Logo */}
         <div className="h-20 flex items-center px-6">
           <ScholarStreamLogo />
           <span className="text-lg font-bold font-serif tracking-tight text-gray-900 dark:text-white">
@@ -346,7 +326,6 @@ const App: React.FC = () => {
           </span>
         </div>
 
-        {/* Primary Nav */}
         <div className="px-3 py-2 space-y-1">
             <button 
                 onClick={() => { setViewMode(ViewMode.FEED); setSidebarOpen(false); }}
@@ -382,7 +361,6 @@ const App: React.FC = () => {
              />
         </div>
 
-        {/* Footer / Theme Toggle */}
         <div className="p-4 border-t border-gray-100 dark:border-zinc-900">
           <button
             onClick={() => setDarkMode(!darkMode)}
@@ -404,9 +382,7 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 flex flex-col h-full w-full relative">
-        {/* Mobile Header */}
         <header className="h-16 md:hidden flex items-center justify-between px-4 bg-white/80 dark:bg-black/80 backdrop-blur-md border-b border-gray-100 dark:border-zinc-900 shrink-0 sticky top-0 z-20">
           <button onClick={() => setSidebarOpen(true)} className="p-2 -ml-2 text-gray-900 dark:text-white">
             <Menu size={20} />
@@ -415,11 +391,9 @@ const App: React.FC = () => {
           <div className="w-8"></div>
         </header>
 
-        {/* Content Scroll Area */}
         <div className="flex-1 overflow-y-auto overflow-x-hidden p-5 md:p-10 scroll-smooth">
           <div className="max-w-5xl mx-auto min-h-full flex flex-col">
             
-            {/* Desktop Header */}
             <div className="hidden md:flex items-end justify-between mb-10">
               <div>
                 <h2 className="text-4xl font-serif font-bold text-gray-900 dark:text-white tracking-tight">
@@ -443,7 +417,6 @@ const App: React.FC = () => {
               )}
             </div>
 
-            {/* Error Banner */}
             {error && (
               <div className="mb-8 p-4 bg-amber-50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 text-amber-800 dark:text-amber-200 rounded-xl text-sm font-medium flex items-center gap-3">
                 <AlertTriangle size={18} className="shrink-0" />
@@ -457,10 +430,8 @@ const App: React.FC = () => {
               </div>
             )}
 
-            {/* Grid Layout */}
             <div className={`grid grid-cols-1 ${displayedPapers.length > 0 ? 'lg:grid-cols-2' : ''} gap-6`}>
               
-              {/* Empty / Zero State - ONLY SHOW IF NOT LOADING AND NO ERROR */}
               {!initialLoading && !error && displayedPapers.length === 0 && (
                 <div className="col-span-full flex flex-col items-center justify-center py-32 text-center">
                   <div className="w-16 h-16 bg-gray-50 dark:bg-zinc-900 rounded-full flex items-center justify-center mb-6">
@@ -492,7 +463,6 @@ const App: React.FC = () => {
                 />
               ))}
 
-              {/* Skeletons - Show when loading */}
               {initialLoading && Array.from({ length: 6 }).map((_, i) => (
                   <div key={i} className="bg-white dark:bg-zinc-900 rounded-2xl p-6 h-64 animate-pulse flex flex-col border border-gray-100 dark:border-zinc-800">
                     <div className="flex justify-between mb-6">
@@ -510,7 +480,6 @@ const App: React.FC = () => {
               ))}
             </div>
 
-            {/* Load More Indicator */}
             {viewMode === ViewMode.FEED && !initialLoading && displayedPapers.length > 0 && !error && (
                 <div ref={observerTarget} className="col-span-full py-12 flex justify-center items-center">
                     {loadingMore ? (
