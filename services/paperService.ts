@@ -1,4 +1,5 @@
 import { Paper, Topic } from "../types";
+import { GoogleGenAI, Type } from "@google/genai";
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
@@ -167,6 +168,7 @@ const executeArxivQuery = async (searchQuery: string, start: number, maxResults:
     const baseApiUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=${start}&max_results=${maxResults}&sortBy=submittedDate&sortOrder=descending`;
 
     // Proxy strategy to handle CORS
+    // ArXiv export URL generally handles CORS, but can be slow or blocked by some networks.
     const endpoints = [
         baseApiUrl,
         `https://api.allorigins.win/raw?url=${encodeURIComponent(baseApiUrl)}`,
@@ -176,7 +178,9 @@ const executeArxivQuery = async (searchQuery: string, start: number, maxResults:
     const performFetch = async (attempt: number): Promise<Paper[]> => {
         try {
             if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-            if (attempt > 0) await wait(1000 * attempt); // Exponential backoff
+            
+            // Reduced backoff time for faster UX (300ms instead of 1000ms)
+            if (attempt > 0) await wait(300 * attempt); 
             
             const response = await fetch(endpoints[attempt], { signal });
             if (!response.ok) throw new Error("Fetch failed");
@@ -274,11 +278,52 @@ export const fetchPapersForTopic = async (topic: Topic, excludeTitles: string[] 
     );
 };
 
-// Fetch aggregated papers from ALL subscribed topics
-export const fetchAggregatedPapers = async (topics: Topic[], excludeTitles: string[] = [], signal?: AbortSignal): Promise<Paper[]> => {
+// Generate AI keywords for better discovery
+const getAiEnhancedKeywords = async (topics: Topic[], bookmarks: Paper[]): Promise<string[]> => {
+    // If no API key or no significant data, skip
+    if (!process.env.API_KEY || (topics.length === 0 && bookmarks.length === 0)) return [];
+
+    try {
+        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+        
+        // Prepare context
+        const topicNames = topics.map(t => t.subCategory || t.category).slice(0, 5).join(", ");
+        const bookmarkTitles = bookmarks.map(b => b.title).slice(0, 3).join("; ");
+        
+        const prompt = `
+            Based on these research interests: [${topicNames}] 
+            and these recently bookmarked papers: [${bookmarkTitles}],
+            generate 3 highly specific, technical search phrases (keywords only, no explanations) 
+            to find relevant new scientific papers on ArXiv.
+        `;
+
+        const response = await ai.models.generateContent({
+            model: "gemini-2.5-flash",
+            contents: prompt,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.ARRAY,
+                    items: { type: Type.STRING }
+                }
+            }
+        });
+        
+        const jsonText = response.text || "[]";
+        const keywords = JSON.parse(jsonText);
+        return Array.isArray(keywords) ? keywords.slice(0, 3) : [];
+        
+    } catch (e) {
+        console.warn("AI keyword generation failed", e);
+        return [];
+    }
+}
+
+// Fetch aggregated papers from ALL subscribed topics + AI enhancement
+export const fetchAggregatedPapers = async (topics: Topic[], bookmarkedPapers: Paper[] = [], excludeTitles: string[] = [], signal?: AbortSignal): Promise<Paper[]> => {
     if (topics.length === 0) return [];
 
-    // Construct a large OR query
+    // 1. Construct standard category query
     const categoryTerms: string[] = [];
     
     topics.forEach(topic => {
@@ -286,18 +331,33 @@ export const fetchAggregatedPapers = async (topics: Topic[], excludeTitles: stri
         if (code) {
              categoryTerms.push(`cat:${code}`);
         } else {
-             // Fallback for custom text topics without official mapping
              const term = topic.subCategory || topic.category;
              categoryTerms.push(`all:"${cleanTerm(term)}"`);
         }
     });
 
-    // Limit query complexity (ArXiv URL length limits). If too many, take first 15.
-    // Query format: (cat:A OR cat:B OR cat:C)
+    // 2. Get AI Suggested Keywords (Optional, parallel fetch if possible but here sequential for simplicity/stability)
+    let aiKeywords: string[] = [];
+    // Only fetch AI keywords if we have bookmarks to guide it, or purely based on topics if bookmarks are empty
+    // To save latency, only do this if not aborted
+    if (!signal?.aborted) {
+        // We do a "fire and forget" style or small timeout race could be better, but let's just await quickly
+        // We only use AI if we have bookmarks to truly "personalize", otherwise categories are sufficient
+        if (bookmarkedPapers.length > 0) {
+             aiKeywords = await getAiEnhancedKeywords(topics, bookmarkedPapers);
+        }
+    }
+
+    // 3. Add AI keywords to the query pool
+    // Note: ArXiv "all" searches title and abstract.
+    aiKeywords.forEach(k => {
+        if(k) categoryTerms.unshift(`all:"${cleanTerm(k)}"`); // Add to front for priority
+    });
+
+    // Limit query complexity.
     const limitedTerms = categoryTerms.slice(0, 15); 
     const searchQuery = limitedTerms.length > 0 ? `(${limitedTerms.join(" OR ")})` : "all:science";
 
-    // Fetch slightly more for the aggregated feed
     const newPapers = await executeArxivQuery(searchQuery, excludeTitles.length, 12, signal, "aggregated");
 
     // Deduplicate
