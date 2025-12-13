@@ -50,7 +50,7 @@ const TopicManager: React.FC<TopicManagerProps> = ({
           <div className={`p-1.5 rounded-lg ${activeTopicId === null ? 'bg-white/20' : 'bg-gray-100 dark:bg-zinc-800 group-hover:bg-white dark:group-hover:bg-black transition-colors'}`}>
              <Zap size={14} className={activeTopicId === null ? "text-white" : "text-amber-500"} fill={activeTopicId === null ? "currentColor" : "currentColor"} />
           </div>
-          <span className="flex-1">Explore</span>
+          <span className="flex-1">My Feed</span>
         </button>
 
         <div className="h-4"></div>
