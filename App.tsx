@@ -6,32 +6,19 @@ import TopicManager from './components/TopicManager';
 import SubscriptionView from './components/SubscriptionView';
 import { Moon, Sun, Menu, Bookmark as BookmarkIcon, RotateCcw, LayoutGrid, Loader2, AlertTriangle, Settings } from 'lucide-react';
 
-// Modern Interlocking 'S' Logo
+// Streamlined 'S' Logo (Fluid Gradient)
 const ScholarStreamLogo = () => (
-  <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="mr-3">
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="mr-3 shrink-0">
     <defs>
       <linearGradient id="grad_S1" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop stopColor="#38bdf8"/>
-        <stop offset="1" stopColor="#0ea5e9"/>
-      </linearGradient>
-      <linearGradient id="grad_S2" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop stopColor="#7dd3fc"/>
         <stop offset="1" stopColor="#0284c7"/>
       </linearGradient>
     </defs>
-    {/* S1: Top Left S */}
     <path 
-      d="M14 5H7C5 5 4 6.5 4 8.5C4 10.5 5 12 7 12H11C13 12 14 13.5 14 15.5C14 17.5 13 19 11 19H4" 
+      d="M21 9H11C8.23858 9 6 11.2386 6 14C6 16.7614 8.23858 19 11 19H21C23.7614 19 26 21.2386 26 24C26 26.7614 23.7614 29 21 29H11" 
       stroke="url(#grad_S1)" 
-      strokeWidth="3.5" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
-    />
-    {/* S2: Bottom Right S */}
-    <path 
-      d="M28 13H21C19 13 18 14.5 18 16.5C18 18.5 19 20 21 20H25C27 20 28 21.5 28 23.5C28 25.5 27 27 25 27H18" 
-      stroke="url(#grad_S2)" 
-      strokeWidth="3.5" 
+      strokeWidth="5" 
       strokeLinecap="round" 
       strokeLinejoin="round"
     />
@@ -320,7 +307,7 @@ const App: React.FC = () => {
   // Calculate subscribed topic codes for highlighting
   const subscribedCodes = new Set(topics.map(t => getCategoryCode(t)).filter(Boolean));
 
-  let headerTitle = "Explore"; // Default Title for 'My Feed' view
+  let headerTitle = "Explore"; 
   let headerSubtitle = "Papers you might be interested in";
   
   if (viewMode === ViewMode.BOOKMARKS) {
