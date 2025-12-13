@@ -6,21 +6,26 @@ import TopicManager from './components/TopicManager';
 import SubscriptionView from './components/SubscriptionView';
 import { Moon, Sun, Menu, Bookmark as BookmarkIcon, RotateCcw, LayoutGrid, Loader2, AlertTriangle, Settings } from 'lucide-react';
 
-// Streamlined 'S' Logo (Fluid Gradient)
+// Overlapping Squircles Logo (Matches Reference Image)
 const ScholarStreamLogo = () => (
   <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="mr-3 shrink-0">
     <defs>
-      <linearGradient id="grad_S1" x1="0%" y1="0%" x2="100%" y2="100%">
+      <linearGradient id="grad_logo" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop stopColor="#38bdf8"/>
         <stop offset="1" stopColor="#0284c7"/>
       </linearGradient>
     </defs>
-    <path 
-      d="M21 9H11C8.23858 9 6 11.2386 6 14C6 16.7614 8.23858 19 11 19H21C23.7614 19 26 21.2386 26 24C26 26.7614 23.7614 29 21 29H11" 
-      stroke="url(#grad_S1)" 
-      strokeWidth="5" 
-      strokeLinecap="round" 
-      strokeLinejoin="round"
+    {/* Back Shape (Top Left) - Light Blue */}
+    <rect x="5" y="5" width="16" height="16" rx="5" fill="#bae6fd" />
+    
+    {/* Front Shape (Bottom Right) - Gradient Blue with Cutout Border Effect */}
+    <rect 
+      x="11" y="11" 
+      width="16" height="16" 
+      rx="5" 
+      fill="url(#grad_logo)" 
+      strokeWidth="2" 
+      className="stroke-white dark:stroke-black transition-colors duration-300" 
     />
   </svg>
 );
