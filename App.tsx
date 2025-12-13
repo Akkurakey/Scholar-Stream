@@ -6,21 +6,35 @@ import TopicManager from './components/TopicManager';
 import SubscriptionView from './components/SubscriptionView';
 import { Moon, Sun, Menu, Bookmark as BookmarkIcon, RotateCcw, LayoutGrid, Loader2, AlertTriangle, Settings } from 'lucide-react';
 
-// Custom Interlocking 'S' Logo
+// Modern Interlocking 'S' Logo
 const ScholarStreamLogo = () => (
   <svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg" className="mr-3">
-    <path d="M10 8C10 5.79086 11.7909 4 14 4H20C23.3137 4 26 6.68629 26 10V11C26 14.3137 23.3137 17 20 17H12C8.68629 17 6 19.6863 6 23V24C6 26.2091 7.79086 28 10 28H16" stroke="url(#paint0_linear)" strokeWidth="3" strokeLinecap="round"/>
-    <path d="M22 24C22 26.2091 20.2091 28 18 28H12C8.68629 28 6 25.3137 6 22V21C6 17.6863 8.68629 15 12 15H20C23.3137 15 26 12.3137 26 9V8C26 5.79086 24.2091 4 22 4H16" stroke="url(#paint1_linear)" strokeWidth="3" strokeLinecap="round" strokeOpacity="0.6"/>
     <defs>
-      <linearGradient id="paint0_linear" x1="6" y1="4" x2="26" y2="28" gradientUnits="userSpaceOnUse">
+      <linearGradient id="grad_S1" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop stopColor="#38bdf8"/>
         <stop offset="1" stopColor="#0ea5e9"/>
       </linearGradient>
-      <linearGradient id="paint1_linear" x1="26" y1="28" x2="6" y2="4" gradientUnits="userSpaceOnUse">
+      <linearGradient id="grad_S2" x1="0%" y1="0%" x2="100%" y2="100%">
         <stop stopColor="#7dd3fc"/>
         <stop offset="1" stopColor="#0284c7"/>
       </linearGradient>
     </defs>
+    {/* S1: Top Left S */}
+    <path 
+      d="M14 5H7C5 5 4 6.5 4 8.5C4 10.5 5 12 7 12H11C13 12 14 13.5 14 15.5C14 17.5 13 19 11 19H4" 
+      stroke="url(#grad_S1)" 
+      strokeWidth="3.5" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
+    {/* S2: Bottom Right S */}
+    <path 
+      d="M28 13H21C19 13 18 14.5 18 16.5C18 18.5 19 20 21 20H25C27 20 28 21.5 28 23.5C28 25.5 27 27 25 27H18" 
+      stroke="url(#grad_S2)" 
+      strokeWidth="3.5" 
+      strokeLinecap="round" 
+      strokeLinejoin="round"
+    />
   </svg>
 );
 
@@ -117,7 +131,7 @@ const App: React.FC = () => {
   }, [topics]);
 
   useEffect(() => {
-    saveCriticalData('ss_viewMode', viewMode);
+    saveCriticalData('ss_viewMode', viewMode as string);
   }, [viewMode]);
 
   useEffect(() => {
@@ -306,7 +320,7 @@ const App: React.FC = () => {
   // Calculate subscribed topic codes for highlighting
   const subscribedCodes = new Set(topics.map(t => getCategoryCode(t)).filter(Boolean));
 
-  let headerTitle = "Explore"; 
+  let headerTitle = "My Feed"; // Default Title for 'My Feed' view
   let headerSubtitle = "Papers you might be interested in";
   
   if (viewMode === ViewMode.BOOKMARKS) {
@@ -383,6 +397,7 @@ const App: React.FC = () => {
              <TopicManager 
                 topics={topics}
                 activeTopicId={activeTopicId}
+                viewMode={viewMode}
                 onSelectTopic={(id) => { setActiveTopicId(id); setViewMode(ViewMode.FEED); if (window.innerWidth < 768) setSidebarOpen(false); }}
                 onManage={() => { setViewMode(ViewMode.MANAGE); setSidebarOpen(false); }}
              />
