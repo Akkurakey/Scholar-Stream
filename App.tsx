@@ -42,6 +42,25 @@ const App: React.FC = () => {
     }
   };
 
+  // --- Helper: Robust Set Item (Critical Data) ---
+  // Tries to save. If quota exceeded, clears the heavy 'ss_cache' and retries.
+  const saveCriticalData = (key: string, value: string) => {
+    try {
+      localStorage.setItem(key, value);
+    } catch (e: any) {
+      if (e.name === 'QuotaExceededError' || e.code === 22 || localStorage.length === 0) {
+         console.warn("Storage full while saving critical data. Clearing cache to make space.");
+         // Nuke the cache to save user settings/topics
+         localStorage.removeItem('ss_cache');
+         try {
+            localStorage.setItem(key, value);
+         } catch (retryError) {
+            console.error("Critical storage failure. Cannot save settings.", retryError);
+         }
+      }
+    }
+  };
+
   // --- State Initialization ---
 
   // 1. Dark Mode
@@ -57,25 +76,31 @@ const App: React.FC = () => {
     return (saved as ViewMode) || ViewMode.FEED;
   });
 
-  // 4. Active Topic
+  // 4. Active Topic & Cache
   const [activeTopicId, setActiveTopicId] = useState<string | null>(() => {
     const saved = localStorage.getItem('ss_activeTopicId');
-    // Ensure we correctly interpret 'null' string vs null value
     if (saved === 'null') return null;
-    return saved || null; // Default to null (Explore) initially if nothing saved
+    return saved || null;
   });
 
-  // 5. Bookmarks
+  const [papersCache, setPapersCache] = useState<Record<string, Paper[]>>(() => safeParse('ss_cache', {}));
+  
+  // 5. Papers - Initialize directly from cache
+  const [papers, setPapers] = useState<Paper[]>(() => {
+    try {
+      const cacheKey = activeTopicId || "all";
+      const cached = papersCache[cacheKey];
+      return cached || [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  // 6. Bookmarks
   const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(() => {
     const saved = safeParse<string[]>('ss_bookmarks', []);
     return new Set(saved);
   });
-  
-  // 6. Cache
-  const [papersCache, setPapersCache] = useState<Record<string, Paper[]>>(() => safeParse('ss_cache', {}));
-  
-  // Current display papers
-  const [papers, setPapers] = useState<Paper[]>([]);
   
   // Loading/Error State
   const [initialLoading, setInitialLoading] = useState(false);
@@ -88,7 +113,7 @@ const App: React.FC = () => {
   // --- Persistence Effects ---
 
   useEffect(() => {
-    localStorage.setItem('ss_theme', JSON.stringify(darkMode));
+    saveCriticalData('ss_theme', JSON.stringify(darkMode));
     if (darkMode) {
       document.documentElement.classList.add('dark');
     } else {
@@ -97,31 +122,53 @@ const App: React.FC = () => {
   }, [darkMode]);
 
   useEffect(() => {
-    localStorage.setItem('ss_topics', JSON.stringify(topics));
+    saveCriticalData('ss_topics', JSON.stringify(topics));
   }, [topics]);
 
   useEffect(() => {
-    localStorage.setItem('ss_viewMode', viewMode);
+    saveCriticalData('ss_viewMode', viewMode);
   }, [viewMode]);
 
   useEffect(() => {
-    localStorage.setItem('ss_activeTopicId', activeTopicId === null ? 'null' : activeTopicId);
+    saveCriticalData('ss_activeTopicId', activeTopicId === null ? 'null' : activeTopicId);
   }, [activeTopicId]);
 
   useEffect(() => {
-    localStorage.setItem('ss_bookmarks', JSON.stringify([...bookmarkedIds]));
+    saveCriticalData('ss_bookmarks', JSON.stringify([...bookmarkedIds]));
   }, [bookmarkedIds]);
 
+  // SPECIAL HANDLER FOR CACHE: Debounce + Pruning
   useEffect(() => {
-    try {
-      localStorage.setItem('ss_cache', JSON.stringify(papersCache));
-    } catch (e) {
-      console.warn("Cache limit reached or error saving cache", e);
-    }
-  }, [papersCache]);
+    const timer = setTimeout(() => {
+        try {
+            localStorage.setItem('ss_cache', JSON.stringify(papersCache));
+        } catch (e) {
+            console.warn("Storage full during cache save. Attempting to prune...");
+            
+            // Strategy: Keep only the current view (activeTopicId or 'all') and limit it to 20 items.
+            // Discard everything else to fit in mobile localStorage limit.
+            try {
+                const currentKey = activeTopicId || 'all';
+                const reducedCache: Record<string, Paper[]> = {};
+                
+                if (papersCache[currentKey]) {
+                    reducedCache[currentKey] = papersCache[currentKey].slice(0, 20);
+                }
+                
+                localStorage.setItem('ss_cache', JSON.stringify(reducedCache));
+                // Update state silently to match what is in storage (optional, but good for consistency)
+                // We won't update state here to avoid re-renders, but next reload will have reduced cache.
+            } catch (retryError) {
+                console.error("Cache prune failed. Clearing cache entirely.", retryError);
+                localStorage.removeItem('ss_cache');
+            }
+        }
+    }, 800); // 800ms debounce to avoid blocking UI on mobile during scroll/fetch
+
+    return () => clearTimeout(timer);
+  }, [papersCache, activeTopicId]);
 
   // --- Validation Effect ---
-  // If the activeTopicId loaded from storage doesn't exist in the current topics list, reset to Explore.
   useEffect(() => {
       if (activeTopicId !== null) {
           const exists = topics.find(t => t.id === activeTopicId);
@@ -129,7 +176,6 @@ const App: React.FC = () => {
               setActiveTopicId(null);
           }
       }
-      // Only run on mount or when topics/id change
       // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [topics.length, activeTopicId]); 
 
@@ -191,28 +237,26 @@ const App: React.FC = () => {
        const cacheKey = activeTopicId || "all";
        const cachedPapers = papersCache[cacheKey];
 
-       // 1. If we have data in cache (even if empty array, meaning we fetched 0 results), show it.
+       // 1. If we have data in cache, update view immediately
        if (cachedPapers !== undefined) {
            setPapers(cachedPapers);
-           setInitialLoading(false);
+           if (cachedPapers.length > 0) setInitialLoading(false);
            setError(null);
        } 
        
        // 2. If undefined (never fetched), trigger fetch
-       // We use a timeout to avoid strict-mode double invocation issues and debounce
        if (cachedPapers === undefined) {
            setPapers([]); 
            const controller = new AbortController();
            const timeoutId = setTimeout(() => {
                 fetchPapers(false, false, controller.signal);
-           }, 100);
+           }, 50); 
            return () => {
                clearTimeout(timeoutId);
                controller.abort();
            };
        }
     }
-    // We intentionally include papersCache here so UI updates immediately when fetch completes
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTopicId, viewMode, papersCache]); 
 
@@ -278,9 +322,8 @@ const App: React.FC = () => {
     let filtered = papers;
     
     if (viewMode === ViewMode.BOOKMARKS) {
-      // Aggregate all known papers to find bookmarks (in case they aren't in current feed view)
+      // Aggregate all known papers to find bookmarks
       const allPapers = Object.values(papersCache).flat();
-      // Deduplicate by ID
       const uniqueMap = new Map();
       allPapers.forEach(p => uniqueMap.set(p.id, p));
       const unique = Array.from(uniqueMap.values()) as Paper[];
