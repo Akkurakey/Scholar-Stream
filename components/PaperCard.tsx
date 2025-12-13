@@ -7,9 +7,16 @@ interface PaperCardProps {
   isBookmarked: boolean;
   onToggleBookmark: (id: string) => void;
   showCategory?: boolean;
+  highlightedTags?: Set<string>;
 }
 
-const PaperCard: React.FC<PaperCardProps> = ({ paper, isBookmarked, onToggleBookmark, showCategory = false }) => {
+const PaperCard: React.FC<PaperCardProps> = ({ 
+  paper, 
+  isBookmarked, 
+  onToggleBookmark, 
+  showCategory = false,
+  highlightedTags = new Set()
+}) => {
 
   const hasUrl = paper.url && paper.url.length > 0;
 
@@ -78,11 +85,21 @@ const PaperCard: React.FC<PaperCardProps> = ({ paper, isBookmarked, onToggleBook
         
         {/* Tags */}
         <div className="flex flex-wrap gap-2 flex-1 mr-4">
-            {paper.tags.map(tag => (
-            <span key={tag} className="text-[10px] font-medium px-2 py-1 bg-gray-50 dark:bg-zinc-800/50 text-gray-600 dark:text-gray-400 rounded-md border border-transparent dark:border-zinc-700">
-                #{tag}
-            </span>
-            ))}
+            {paper.tags.map(tag => {
+                const isHighlighted = highlightedTags.has(tag);
+                return (
+                    <span 
+                        key={tag} 
+                        className={`text-[10px] font-medium px-2 py-1 rounded-md border transition-colors ${
+                            isHighlighted 
+                            ? 'bg-primary-50 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 border-primary-200 dark:border-primary-800'
+                            : 'bg-gray-50 dark:bg-zinc-800/50 text-gray-600 dark:text-gray-400 border-transparent dark:border-zinc-700'
+                        }`}
+                    >
+                        #{tag}
+                    </span>
+                );
+            })}
         </div>
 
         {/* Actions */}
