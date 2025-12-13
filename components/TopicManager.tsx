@@ -79,7 +79,7 @@ const TopicManager: React.FC<TopicManagerProps> = ({
               </div>
               {topic.keywords.length > 0 ? (
                   <div className="text-[10px] text-primary-500/80 truncate mt-0.5 font-medium">
-                      + {topic.keywords.length} filters
+                      Filter: {topic.keywords.join(', ')}
                   </div>
               ) : (
                   <div className="text-[10px] text-gray-400 dark:text-gray-500 truncate mt-0.5">
