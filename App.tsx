@@ -290,7 +290,13 @@ const App: React.FC = () => {
       const allPapers = (Object.values(papersCache) as Paper[][]).flat();
       const uniqueMap = new Map<string, Paper>();
       allPapers.forEach((p) => uniqueMap.set(p.id, p));
-      return Array.from(uniqueMap.values()).filter((p) => bookmarkedIds.has(p.id));
+      
+      // Return papers in reverse order of addition (newest bookmarks first)
+      // JS Set preserves insertion order, so we reverse the array.
+      return Array.from(bookmarkedIds)
+        .reverse()
+        .map(id => uniqueMap.get(id))
+        .filter((p): p is Paper => p !== undefined);
     }
     return papers;
   })();
@@ -300,7 +306,7 @@ const App: React.FC = () => {
   // Calculate subscribed topic codes for highlighting
   const subscribedCodes = new Set(topics.map(t => getCategoryCode(t)).filter(Boolean));
 
-  let headerTitle = "Explore"; // Default Title for 'Explore' view
+  let headerTitle = "My Feed"; // Default Title for 'My Feed' view
   let headerSubtitle = "Papers you might be interested in";
   
   if (viewMode === ViewMode.BOOKMARKS) {
@@ -347,7 +353,7 @@ const App: React.FC = () => {
                 }`}
             >
                 <LayoutGrid size={18} />
-                Explore
+                My Feed
             </button>
             <button 
                 onClick={() => { setViewMode(ViewMode.BOOKMARKS); setSidebarOpen(false); }}
