@@ -23,4 +23,5 @@ export interface Topic {
 export enum ViewMode {
   FEED = 'FEED',
   BOOKMARKS = 'BOOKMARKS',
+  MANAGE = 'MANAGE',
 }
