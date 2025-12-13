@@ -306,7 +306,7 @@ const App: React.FC = () => {
   // Calculate subscribed topic codes for highlighting
   const subscribedCodes = new Set(topics.map(t => getCategoryCode(t)).filter(Boolean));
 
-  let headerTitle = "My Feed"; // Default Title for 'My Feed' view
+  let headerTitle = "Explore"; 
   let headerSubtitle = "Papers you might be interested in";
   
   if (viewMode === ViewMode.BOOKMARKS) {
