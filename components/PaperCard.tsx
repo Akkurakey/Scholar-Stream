@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { Paper } from '../types';
 import { Bookmark, ExternalLink, Calendar, BookOpen } from 'lucide-react';
 
@@ -17,8 +17,11 @@ const PaperCard: React.FC<PaperCardProps> = ({
   showCategory = false,
   highlightedTags = new Set()
 }) => {
-
   const hasUrl = paper.url && paper.url.length > 0;
+  
+  // Construct PDF URL by replacing /abs/ with /pdf/
+  // ArXiv URLs: https://arxiv.org/abs/2101.00000 -> https://arxiv.org/pdf/2101.00000
+  const pdfUrl = paper.url ? paper.url.replace('/abs/', '/pdf/') : null;
 
   const CardWrapper = hasUrl ? 'a' : 'div';
   const wrapperProps = hasUrl ? {
@@ -28,6 +31,14 @@ const PaperCard: React.FC<PaperCardProps> = ({
   } : {};
 
   const authorText = paper.authors.length > 0 ? paper.authors.join(", ") : "Unknown Author";
+
+  const handlePdfClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (pdfUrl) {
+      window.open(pdfUrl, '_blank', 'noopener,noreferrer');
+    }
+  };
 
   return (
     <CardWrapper 
@@ -104,6 +115,20 @@ const PaperCard: React.FC<PaperCardProps> = ({
 
         {/* Actions */}
         <div className="flex gap-2 shrink-0">
+            {pdfUrl && (
+                <button
+                    onClick={handlePdfClick}
+                    className="p-2 rounded-full transition-colors text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    title="View PDF"
+                >
+                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <path d="M14 2H6C4.89543 2 4 2.89543 4 4V20C4 21.1046 4.89543 22 6 22H18C19.1046 22 20 21.1046 20 20V8L14 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <polyline points="14 2 14 8 20 8" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                        <text x="12" y="17" fill="currentColor" textAnchor="middle" fontSize="8" fontWeight="bold" strokeWidth="0">PDF</text>
+                    </svg>
+                </button>
+            )}
+
             <button
                 onClick={(e) => { e.preventDefault(); e.stopPropagation(); onToggleBookmark(paper.id); }}
                 className={`p-2 rounded-full transition-colors ${
