@@ -23,29 +23,62 @@ const ScholarStreamLogo = () => (
   </svg>
 );
 
-const App: React.FC = () => {
-  // --- State ---
-  const [darkMode, setDarkMode] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(false); 
-  const [viewMode, setViewMode] = useState<ViewMode>(ViewMode.FEED);
+const DEFAULT_TOPICS: Topic[] = [
+  { id: '1', category: 'Computer Science', subCategory: 'Artificial Intelligence', keywords: [] },
+  { id: '2', category: 'Computer Science', subCategory: 'Computer Vision and Pattern Recognition', keywords: [] },
+  { id: '3', category: 'Physics', subCategory: 'Quantum Physics', keywords: [] },
+  { id: '4', category: 'Quantitative Biology', subCategory: 'Genomics', keywords: [] }
+];
 
-  // Data State - Updated to match new Official ArXiv Taxonomy in TopicManager
-  const [topics, setTopics] = useState<Topic[]>([
-    { id: '1', category: 'Computer Science', subCategory: 'Artificial Intelligence', keywords: [] },
-    { id: '2', category: 'Computer Science', subCategory: 'Computer Vision and Pattern Recognition', keywords: [] },
-    { id: '3', category: 'Physics', subCategory: 'Quantum Physics', keywords: [] },
-    { id: '4', category: 'Quantitative Biology', subCategory: 'Genomics', keywords: [] }
-  ]);
+const App: React.FC = () => {
+  // --- State Initialization with LocalStorage ---
+
+  // 1. Dark Mode
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('ss_theme');
+    return saved ? JSON.parse(saved) : false;
+  });
+
+  const [sidebarOpen, setSidebarOpen] = useState(false); 
   
-  // CACHE STATE: Stores papers by topicId. "all" key used for aggregated feed.
-  const [papersCache, setPapersCache] = useState<Record<string, Paper[]>>({});
+  // 2. Topics
+  const [topics, setTopics] = useState<Topic[]>(() => {
+    const saved = localStorage.getItem('ss_topics');
+    return saved ? JSON.parse(saved) : DEFAULT_TOPICS;
+  });
+
+  // 3. View Mode
+  const [viewMode, setViewMode] = useState<ViewMode>(() => {
+    const saved = localStorage.getItem('ss_viewMode');
+    return (saved as ViewMode) || ViewMode.FEED;
+  });
+
+  // 4. Active Topic
+  const [activeTopicId, setActiveTopicId] = useState<string | null>(() => {
+    const saved = localStorage.getItem('ss_activeTopicId');
+    // If explicitly null string in storage, keep it null, otherwise check if valid
+    if (saved === 'null') return null;
+    return saved || (DEFAULT_TOPICS[0]?.id || null);
+  });
+
+  // 5. Bookmarks (Set handling)
+  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(() => {
+    const saved = localStorage.getItem('ss_bookmarks');
+    return saved ? new Set(JSON.parse(saved)) : new Set();
+  });
+  
+  // 6. Cache
+  const [papersCache, setPapersCache] = useState<Record<string, Paper[]>>(() => {
+    try {
+      const saved = localStorage.getItem('ss_cache');
+      return saved ? JSON.parse(saved) : {};
+    } catch (e) {
+      return {};
+    }
+  });
   
   // Current display papers (derived or direct state)
   const [papers, setPapers] = useState<Paper[]>([]);
-  const [bookmarkedIds, setBookmarkedIds] = useState<Set<string>>(new Set());
-  
-  // SAFE INITIALIZATION
-  const [activeTopicId, setActiveTopicId] = useState<string | null>(topics[0]?.id || null);
   
   // Loading/Error State
   const [initialLoading, setInitialLoading] = useState(false);
@@ -55,15 +88,51 @@ const App: React.FC = () => {
   // Infinite Scroll Refs
   const observerTarget = useRef<HTMLDivElement>(null);
 
-  // --- Effects ---
+  // --- Effects for Persistence ---
 
+  // Persist Theme
   useEffect(() => {
+    localStorage.setItem('ss_theme', JSON.stringify(darkMode));
     if (darkMode) {
       document.documentElement.classList.add('dark');
     } else {
       document.documentElement.classList.remove('dark');
     }
   }, [darkMode]);
+
+  // Persist Topics
+  useEffect(() => {
+    localStorage.setItem('ss_topics', JSON.stringify(topics));
+  }, [topics]);
+
+  // Persist ViewMode & ActiveTopic
+  useEffect(() => {
+    localStorage.setItem('ss_viewMode', viewMode);
+  }, [viewMode]);
+
+  useEffect(() => {
+    // Stringify 'null' correctly or the ID
+    localStorage.setItem('ss_activeTopicId', activeTopicId === null ? 'null' : activeTopicId);
+  }, [activeTopicId]);
+
+  // Persist Bookmarks (Convert Set to Array)
+  useEffect(() => {
+    localStorage.setItem('ss_bookmarks', JSON.stringify([...bookmarkedIds]));
+  }, [bookmarkedIds]);
+
+  // Persist Cache
+  useEffect(() => {
+    try {
+      localStorage.setItem('ss_cache', JSON.stringify(papersCache));
+    } catch (e) {
+      console.warn("Cache too large for localStorage, clearing old cache.");
+      // Simple fallback: if cache is full, we could clear it, or just not save. 
+      // For this demo, we'll try to just ignore the error.
+    }
+  }, [papersCache]);
+
+
+  // --- Logic Effects ---
 
   // Fetch Papers Logic
   // Accepts a signal to support cancelling obsolete requests (fixes React Strict Mode double-fetch)
