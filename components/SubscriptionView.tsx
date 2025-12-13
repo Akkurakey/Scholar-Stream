@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Topic } from '../types';
-import { Plus, Trash2, Hash, BookOpen, Layers } from 'lucide-react';
+import { Plus, Trash2, Hash, BookOpen, Layers, X } from 'lucide-react';
 
 interface SubscriptionViewProps {
   topics: Topic[];
@@ -180,7 +180,8 @@ const CATEGORY_HIERARCHY: Record<string, string[]> = {
 const SubscriptionView: React.FC<SubscriptionViewProps> = ({ topics, onAddTopic, onDeleteTopic }) => {
   const [selectedMainCat, setSelectedMainCat] = useState<string>("Computer Science");
   const [selectedField, setSelectedField] = useState<string>("Artificial Intelligence");
-  const [customKeyword, setCustomKeyword] = useState("");
+  const [keywordInput, setKeywordInput] = useState("");
+  const [activeFilters, setActiveFilters] = useState<string[]>([]);
 
   const handleMainCatChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const main = e.target.value;
@@ -189,19 +190,52 @@ const SubscriptionView: React.FC<SubscriptionViewProps> = ({ topics, onAddTopic,
     setSelectedField(firstField);
   };
 
+  const handleAddFilter = () => {
+      const cleaned = keywordInput.trim();
+      if (!cleaned) return;
+
+      if (activeFilters.length >= 3) {
+          alert("Maximum 3 filters allowed.");
+          return;
+      }
+
+      // Auto-capitalize: first char upper, rest as is
+      const capitalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+      
+      if (!activeFilters.includes(capitalized)) {
+          setActiveFilters([...activeFilters, capitalized]);
+      }
+      setKeywordInput("");
+  };
+
+  const handleRemoveFilter = (filter: string) => {
+      setActiveFilters(activeFilters.filter(f => f !== filter));
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter') {
+          e.preventDefault();
+          handleAddFilter();
+      }
+  };
+
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
     
-    // Allow comma separated keywords
-    const keywords = customKeyword
-        .split(',')
-        .map(k => k.trim())
-        .filter(k => k.length > 0);
+    // Add pending input if user forgot to hit enter
+    const finalFilters = [...activeFilters];
+    if (keywordInput.trim() && finalFilters.length < 3) {
+        const cleaned = keywordInput.trim();
+        const capitalized = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
+        if (!finalFilters.includes(capitalized)) {
+            finalFilters.push(capitalized);
+        }
+    }
 
     const exists = topics.some(t => 
         t.category === selectedMainCat && 
         t.subCategory === selectedField &&
-        JSON.stringify(t.keywords.sort()) === JSON.stringify(keywords.sort())
+        JSON.stringify(t.keywords.sort()) === JSON.stringify(finalFilters.sort())
     );
     
     if (exists) {
@@ -213,10 +247,11 @@ const SubscriptionView: React.FC<SubscriptionViewProps> = ({ topics, onAddTopic,
       id: Date.now().toString() + Math.random().toString(),
       category: selectedMainCat,
       subCategory: selectedField,
-      keywords: keywords,
+      keywords: finalFilters,
     };
     onAddTopic(newTopic);
-    setCustomKeyword("");
+    setActiveFilters([]);
+    setKeywordInput("");
   };
 
   return (
@@ -279,24 +314,55 @@ const SubscriptionView: React.FC<SubscriptionViewProps> = ({ topics, onAddTopic,
                     </div>
 
                     <div className="space-y-2">
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                            Keywords <span className="text-gray-400 font-normal lowercase ml-1">(Optional, comma separated)</span>
-                        </label>
+                        <div className="flex justify-between items-center">
+                            <label className="text-xs font-bold text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                                Filters <span className="text-gray-400 font-normal lowercase ml-1">(Max 3)</span>
+                            </label>
+                            <span className="text-xs text-gray-400">{activeFilters.length}/3</span>
+                        </div>
+                        
                         <div className="relative">
                             <input
                                 type="text"
-                                placeholder="e.g. transformer, neural networks"
-                                value={customKeyword}
-                                onChange={(e) => setCustomKeyword(e.target.value)}
-                                className="w-full pl-10 pr-4 py-3.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-zinc-800 rounded-xl text-sm font-medium outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 text-gray-900 dark:text-white transition-all placeholder:text-gray-400"
+                                placeholder={activeFilters.length >= 3 ? "Limit reached" : "Type & press Enter"}
+                                value={keywordInput}
+                                onChange={(e) => setKeywordInput(e.target.value)}
+                                onKeyDown={handleKeyDown}
+                                disabled={activeFilters.length >= 3}
+                                className="w-full pl-10 pr-12 py-3.5 bg-gray-50 dark:bg-black border border-gray-200 dark:border-zinc-800 rounded-xl text-sm font-medium outline-none focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 text-gray-900 dark:text-white transition-all placeholder:text-gray-400 disabled:opacity-50 disabled:cursor-not-allowed"
                             />
                             <Hash size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                            
+                            <button
+                                type="button"
+                                onClick={handleAddFilter}
+                                disabled={!keywordInput.trim() || activeFilters.length >= 3}
+                                className="absolute right-2 top-1/2 -translate-y-1/2 p-1.5 bg-gray-200 dark:bg-zinc-800 hover:bg-primary-500 hover:text-white rounded-lg text-gray-500 transition-colors disabled:opacity-0"
+                            >
+                                <Plus size={14} />
+                            </button>
+                        </div>
+
+                        {/* Tag Cloud */}
+                        <div className="flex flex-wrap gap-2 pt-1 min-h-[30px]">
+                            {activeFilters.map(filter => (
+                                <span key={filter} className="animate-fadeIn inline-flex items-center gap-1.5 px-3 py-1.5 bg-primary-50 dark:bg-primary-900/20 text-primary-700 dark:text-primary-300 text-xs font-semibold rounded-lg border border-primary-100 dark:border-primary-800/50">
+                                    {filter}
+                                    <button 
+                                        type="button"
+                                        onClick={() => handleRemoveFilter(filter)}
+                                        className="hover:text-red-500 transition-colors"
+                                    >
+                                        <X size={12} />
+                                    </button>
+                                </span>
+                            ))}
                         </div>
                     </div>
 
                     <button 
                         type="submit"
-                        className="w-full py-4 bg-primary-600 hover:bg-primary-700 active:scale-[0.98] text-white rounded-xl font-bold transition-all shadow-lg shadow-primary-500/20 flex items-center justify-center gap-2"
+                        className="w-full py-4 bg-primary-600 hover:bg-primary-700 active:scale-[0.98] text-white rounded-xl font-bold transition-all shadow-lg shadow-primary-500/20 flex items-center justify-center gap-2 mt-4"
                     >
                         <Plus size={18} />
                         Subscribe
