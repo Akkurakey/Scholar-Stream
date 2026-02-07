@@ -1,12 +1,18 @@
 import { Paper, Topic } from "../types";
-import { GoogleGenAI, Type } from "@google/genai";
+
+// --- Configuration ---
+
+const ARXIV_API_URL = "https://export.arxiv.org/api/query";
+const BASE_DELAY_MS = 1000; // ArXiv 建议请求间隔 3秒，我们在 retry 时会有指数退避
+
+// --- Helpers ---
 
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 const cleanTerm = (t: string) => t.replace(/["\\]/g, '').trim();
 
-// STRICT MAPPING: Human Readable Subcategory Name -> Official ArXiv Code
-// Source: https://arxiv.org/category_taxonomy
+// --- Mappings (保持不变，这是 ArXiv 的核心分类) ---
+
 export const SUB_CATEGORY_TO_CODE: Record<string, string> = {
     // Computer Science
     "Artificial Intelligence": "cs.AI",
@@ -30,13 +36,13 @@ export const SUB_CATEGORY_TO_CODE: Record<string, string> = {
     "Computer Science and Game Theory": "cs.GT",
     "Human-Computer Interaction": "cs.HC",
     "Information Retrieval": "cs.IR",
-    "Information Theory": "cs.IT", // Also in Math
-    "Machine Learning": "cs.LG", // Also in Stat
+    "Information Theory": "cs.IT",
+    "Machine Learning": "cs.LG",
     "Logic in Computer Science": "cs.LO",
     "Multiagent Systems": "cs.MA",
     "Multimedia": "cs.MM",
     "Mathematical Software": "cs.MS",
-    "Numerical Analysis": "cs.NA", // Also in Math
+    "Numerical Analysis": "cs.NA",
     "Neural and Evolutionary Computing": "cs.NE",
     "Networking and Internet Architecture": "cs.NI",
     "Other Computer Science": "cs.OH",
@@ -48,7 +54,7 @@ export const SUB_CATEGORY_TO_CODE: Record<string, string> = {
     "Sound": "cs.SD",
     "Software Engineering": "cs.SE",
     "Social and Information Networks": "cs.SI",
-    "Systems and Control": "cs.SY", // Also in EESS
+    "Systems and Control": "cs.SY",
 
     // Economics
     "Econometrics": "econ.EM",
@@ -59,76 +65,32 @@ export const SUB_CATEGORY_TO_CODE: Record<string, string> = {
     "Audio and Speech Processing": "eess.AS",
     "Image and Video Processing": "eess.IV",
     "Signal Processing": "eess.SP",
-    // "Systems and Control": "eess.SY", // Duplicate name, map to eess.SY generally if selected under EESS
 
-    // Mathematics (Selected common ones)
-    "Algebraic Geometry": "math.AG",
-    "Analysis of PDEs": "math.AP",
-    "Category Theory": "math.CT",
+    // Mathematics (Selected)
     "Combinatorics": "math.CO",
-    "Differential Geometry": "math.DG",
     "Dynamical Systems": "math.DS",
-    "Functional Analysis": "math.FA",
-    "General Mathematics": "math.GM",
-    "General Topology": "math.GN",
-    "Group Theory": "math.GR",
-    "Geometric Topology": "math.GT",
-    "History and Overview": "math.HO",
-    "K-Theory and Homology": "math.KT",
     "Logic": "math.LO",
-    "Metric Geometry": "math.MG",
     "Mathematical Physics": "math.MP",
     "Number Theory": "math.NT",
-    "Operator Algebras": "math.OA",
     "Optimization and Control": "math.OC",
     "Probability": "math.PR",
-    "Quantum Algebra": "math.QA",
-    "Rings and Algebras": "math.RA",
-    "Representation Theory": "math.RT",
-    "Symplectic Geometry": "math.SG",
-    "Spectral Theory": "math.SP",
     "Statistics Theory": "math.ST",
 
-    // Physics
-    "Astrophysics of Galaxies": "astro-ph.GA",
-    "Cosmology and Nongalactic Astrophysics": "astro-ph.CO",
-    "Earth and Planetary Astrophysics": "astro-ph.EP",
-    "High Energy Astrophysical Phenomena": "astro-ph.HE",
-    "Instrumentation and Methods for Astrophysics": "astro-ph.IM",
-    "Solar and Stellar Astrophysics": "astro-ph.SR",
+    // Physics (Selected)
     "General Relativity and Quantum Cosmology": "gr-qc",
-    "High Energy Physics - Experiment": "hep-ex",
-    "High Energy Physics - Lattice": "hep-lat",
-    "High Energy Physics - Phenomenology": "hep-ph",
     "High Energy Physics - Theory": "hep-th",
     "Quantum Physics": "quant-ph",
-    "Nuclear Experiment": "nucl-ex",
-    "Nuclear Theory": "nucl-th",
     "Fluid Dynamics": "physics.flu-dyn",
-    "Geophysics": "physics.geo-ph",
-    "Medical Physics": "physics.med-ph",
     "Optics": "physics.optics",
-    "Plasma Physics": "physics.plasm-ph",
-    "Space Physics": "physics.space-ph",
 
     // Quantitative Biology
-    "Biomolecules": "q-bio.BM",
-    "Cell Behavior": "q-bio.CB",
     "Genomics": "q-bio.GN",
-    "Molecular Networks": "q-bio.MN",
     "Neurons and Cognition": "q-bio.NC",
-    "Populations and Evolution": "q-bio.PE",
     "Quantitative Methods": "q-bio.QM",
-    "Subcellular Processes": "q-bio.SC",
-    "Tissues and Organs": "q-bio.TO",
 
     // Quantitative Finance
     "Computational Finance": "q-fin.CP",
-    "Economics": "q-fin.EC", // Duplicate name
-    "General Finance": "q-fin.GN",
-    "Mathematical Finance": "q-fin.MF",
     "Portfolio Management": "q-fin.PM",
-    "Pricing of Securities": "q-fin.PR",
     "Risk Management": "q-fin.RM",
     "Statistical Finance": "q-fin.ST",
     "Trading and Market Microstructure": "q-fin.TR",
@@ -136,18 +98,14 @@ export const SUB_CATEGORY_TO_CODE: Record<string, string> = {
     // Statistics
     "Applications": "stat.AP",
     "Computation": "stat.CO",
-    // "Machine Learning": "stat.ML", // Duplicate
     "Methodology": "stat.ME",
-    "Other Statistics": "stat.OT",
-    // "Statistics Theory": "stat.TH"
+    "Other Statistics": "stat.OT"
 };
 
-// Create a Reverse Map: Code -> Human Readable Name
 const CODE_TO_SUB_CATEGORY: Record<string, string> = Object.entries(SUB_CATEGORY_TO_CODE).reduce((acc, [name, code]) => {
     acc[code] = name;
     return acc;
 }, {} as Record<string, string>);
-
 
 export const getCategoryCode = (topic: Topic): string => {
     if (topic.subCategory) {
@@ -162,13 +120,16 @@ export const getCategoryCode = (topic: Topic): string => {
     return "";
 };
 
-// Helper: Construct single topic query part
+// --- Query Construction ---
+
 const buildTopicQuery = (topic: Topic): string => {
     const code = getCategoryCode(topic);
+    
+    // 逻辑：如果能找到代码，就用 cat:代码。否则用 all:"名称"。
     const base = code ? `cat:${code}` : `all:"${cleanTerm(topic.subCategory || topic.category)}"`;
     
-    // If topic has specific keywords, we want papers that match the Category AND (Keyword1 OR Keyword2)
-    if (topic.keywords.length > 0) {
+    // 如果有关键词：(Category) AND (Key1 OR Key2)
+    if (topic.keywords && topic.keywords.length > 0) {
         const keywordQuery = topic.keywords.map(k => `all:"${cleanTerm(k)}"`).join(" OR ");
         return `(${base} AND (${keywordQuery}))`;
     }
@@ -176,184 +137,154 @@ const buildTopicQuery = (topic: Topic): string => {
     return base;
 };
 
-// Reusable fetcher for a constructed ArXiv Query String
+// --- XML Parsing (健壮的解析器) ---
+
+const parseArxivXml = (xmlText: string, associatedTopicId?: string): Paper[] => {
+    const parser = new DOMParser();
+    const xmlDoc = parser.parseFromString(xmlText, "text/xml");
+    
+    if (xmlDoc.getElementsByTagName("parsererror").length > 0) {
+        console.error("XML Parse Error", xmlDoc.getElementsByTagName("parsererror")[0]);
+        throw new Error("XML Parser Error");
+    }
+
+    const entries = Array.from(xmlDoc.getElementsByTagName("entry"));
+
+    return entries.map(entry => {
+        const getText = (tag: string) => entry.getElementsByTagName(tag)[0]?.textContent?.trim() || "";
+        
+        // ID 清洗: http://arxiv.org/abs/2101.12345v1 -> 2101.12345
+        const idRaw = getText("id");
+        const cleanId = idRaw.replace(/v\d+$/, '').split('/').pop() || idRaw;
+        
+        const authors = Array.from(entry.getElementsByTagName("author"))
+            .map(n => n.getElementsByTagName("name")[0]?.textContent || "")
+            .filter(n => n);
+
+        const published = getText("published").split('T')[0];
+        
+        // 获取主分类
+        const primaryCatCode = entry.getElementsByTagName("arxiv:primary_category")[0]?.getAttribute("term") || "";
+        
+        // 获取所有 Tag
+        const allCategories = Array.from(entry.getElementsByTagName("category"));
+        const tags = allCategories.map(c => c.getAttribute("term") || "").filter(t => t);
+
+        const humanReadableCategory = CODE_TO_SUB_CATEGORY[primaryCatCode] || primaryCatCode;
+
+        return {
+            id: cleanId,
+            title: getText("title").replace(/[\n\r\s]+/g, ' '),
+            authors: authors.length ? authors : ["Unknown Author"],
+            abstract: getText("summary").replace(/[\n\r\s]+/g, ' '),
+            journal: humanReadableCategory, 
+            source: "ArXiv",
+            publishDate: published, 
+            doi: "", 
+            url: idRaw,
+            tags: tags,
+            topicId: associatedTopicId || "aggregated"
+        };
+    });
+};
+
+// --- Network / Fetching (带重试和代理机制) ---
+
 const executeArxivQuery = async (searchQuery: string, start: number, maxResults: number, signal?: AbortSignal, associatedTopicId?: string): Promise<Paper[]> => {
     if (!searchQuery) return [];
 
-    // Sort by submittedDate descending (newest first)
-    const baseApiUrl = `https://export.arxiv.org/api/query?search_query=${encodeURIComponent(searchQuery)}&start=${start}&max_results=${maxResults}&sortBy=submittedDate&sortOrder=descending`;
+    const queryParams = new URLSearchParams({
+        search_query: searchQuery,
+        start: start.toString(),
+        max_results: maxResults.toString(),
+        sortBy: 'submittedDate',
+        sortOrder: 'descending'
+    });
 
-    // Proxy strategy to handle CORS
+    const targetUrl = `${ARXIV_API_URL}?${queryParams.toString()}`;
+
+    // 使用多个代理端点以防 CORS 问题或 IP 封锁
     const endpoints = [
-        baseApiUrl,
-        `https://api.allorigins.win/raw?url=${encodeURIComponent(baseApiUrl)}`,
-        `https://corsproxy.io/?${encodeURIComponent(baseApiUrl)}`
+        targetUrl, 
+        `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}`,
+        `https://corsproxy.io/?${encodeURIComponent(targetUrl)}`
     ];
 
-    const performFetch = async (attempt: number): Promise<Paper[]> => {
+    let lastError: any;
+
+    for (let attempt = 0; attempt < endpoints.length; attempt++) {
+        if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
+
         try {
-            if (signal?.aborted) throw new DOMException('Aborted', 'AbortError');
-            if (attempt > 0) await wait(300 * attempt); 
-            
+            // 指数退避: 0ms, 1000ms, 2000ms...
+            if (attempt > 0) await wait(BASE_DELAY_MS * attempt);
+
             const response = await fetch(endpoints[attempt], { signal });
-            if (!response.ok) throw new Error("Fetch failed");
+            
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
             
             const xmlText = await response.text();
             
-            if (xmlText.includes("<!DOCTYPE html") || xmlText.length < 50) throw new Error("Invalid XML response");
+            // 简单验证是否是有效 XML
+            if (xmlText.includes("<!DOCTYPE html") || xmlText.length < 50) {
+                throw new Error("Received HTML instead of XML (likely proxy block)");
+            }
 
-            const parser = new DOMParser();
-            const xmlDoc = parser.parseFromString(xmlText, "text/xml");
-            if (xmlDoc.getElementsByTagName("parsererror").length > 0) throw new Error("Parser Error");
-
-            const entries = Array.from(xmlDoc.getElementsByTagName("entry"));
-            
-            return entries.map(entry => {
-                const getText = (tag: string) => entry.getElementsByTagName(tag)[0]?.textContent?.trim() || "";
-                
-                const idRaw = getText("id");
-                const cleanId = idRaw.split('/abs/')[1]?.split('v')[0] || idRaw;
-                
-                const authors = Array.from(entry.getElementsByTagName("author"))
-                    .map(n => n.getElementsByTagName("name")[0]?.textContent || "")
-                    .filter(n => n);
-                    
-                const published = getText("published").split('T')[0];
-                const primaryCatCode = entry.getElementsByTagName("arxiv:primary_category")[0]?.getAttribute("term") || "";
-                
-                // EXTRACT ALL TAGS
-                const allCategories = Array.from(entry.getElementsByTagName("category"));
-                const tags = allCategories.map(c => c.getAttribute("term") || "").filter(t => t);
-                // Ensure primary is first or present, though ArXiv usually lists it. The 'tags' array now contains all codes.
-
-                const humanReadableCategory = CODE_TO_SUB_CATEGORY[primaryCatCode] || primaryCatCode;
-
-                return {
-                    id: cleanId,
-                    title: getText("title").replace(/[\n\r\s]+/g, ' '),
-                    authors: authors.length ? authors : ["Unknown Author"],
-                    abstract: getText("summary").replace(/[\n\r\s]+/g, ' '),
-                    journal: humanReadableCategory, 
-                    source: "ArXiv",
-                    publishDate: published, 
-                    doi: "", 
-                    url: idRaw,
-                    tags: tags,
-                    topicId: associatedTopicId || "aggregated"
-                };
-            });
+            return parseArxivXml(xmlText, associatedTopicId);
 
         } catch (e: any) {
             if (e.name === 'AbortError') throw e;
-            if (attempt < endpoints.length - 1) return performFetch(attempt + 1);
-            console.warn("ArXiv fetch failed after retries", e);
-            return [];
+            console.warn(`Attempt ${attempt + 1} failed for ArXiv fetch:`, e);
+            lastError = e;
         }
-    };
+    }
 
-    return performFetch(0);
+    console.error("All ArXiv fetch attempts failed.", lastError);
+    return [];
 };
 
-// Fetch for a single topic
+// --- Public API methods ---
+
+// 1. 获取单个 Topic 的论文
 export const fetchPapersForTopic = async (topic: Topic, excludeTitles: string[] = [], signal?: AbortSignal): Promise<Paper[]> => {
     const searchQuery = buildTopicQuery(topic);
-    const newPapers = await executeArxivQuery(searchQuery, excludeTitles.length, 8, signal, topic.id);
+    // 多抓取一点以便后续去重
+    const rawPapers = await executeArxivQuery(searchQuery, 0, 15, signal, topic.id);
 
-    // Deduplicate
-    const uniquePapers: Paper[] = [];
     const seenTitles = new Set(excludeTitles.map(t => t.toLowerCase().replace(/[^a-z0-9]/g, '')));
-
-    for (const p of newPapers) {
+    return rawPapers.filter(p => {
         const nTitle = p.title.toLowerCase().replace(/[^a-z0-9]/g, '');
-        if (!seenTitles.has(nTitle)) {
-            seenTitles.add(nTitle);
-            uniquePapers.push(p);
-        }
-    }
-
-    return uniquePapers.sort((a, b) => 
-        new Date(b.publishDate).getTime() - new Date(a.publishDate).getTime()
-    );
+        if (seenTitles.has(nTitle)) return false;
+        seenTitles.add(nTitle);
+        return true;
+    });
 };
 
-// Generate AI query for better discovery
-const getAiEnhancedQuery = async (topics: Topic[], bookmarks: Paper[]): Promise<string | null> => {
-    if (!process.env.API_KEY || (topics.length === 0 && bookmarks.length === 0)) return null;
-
-    try {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        
-        const topicContext = topics.slice(0, 5).map(t => {
-            const code = getCategoryCode(t);
-            return code ? `${t.subCategory}(${code})` : t.category;
-        }).join(", ");
-        
-        const bookmarkContext = bookmarks.slice(0, 3).map(b => `"${b.title}"`).join("; ");
-        
-        // Ask for a COMPLETE ArXiv query string to avoid logic errors
-        const prompt = `
-            Context: User follows [${topicContext}] and liked [${bookmarkContext}].
-            Task: Create a SINGLE ArXiv API search query (using 'all:', 'cat:', 'AND', 'OR') to find NEW, RELEVANT papers.
-            Constraints: 
-            1. Query must be specific to their technical interests.
-            2. Do NOT use broad terms like "all:learning" alone. Combine with category (e.g. cat:cs.AI AND all:"transformer").
-            3. Return ONLY the raw query string, no JSON, no quotes.
-        `;
-
-        const response = await ai.models.generateContent({
-            model: "gemini-2.5-flash",
-            contents: prompt,
-        });
-        
-        let query = response.text?.trim() || "";
-        // Basic cleanup
-        query = query.replace(/^`+|`+$/g, '').trim();
-        return query.length > 5 ? query : null;
-        
-    } catch (e) {
-        console.warn("AI query generation failed", e);
-        return null;
-    }
-}
-
-// Fetch aggregated papers using "Split Fetch" strategy
-export const fetchAggregatedPapers = async (topics: Topic[], bookmarkedPapers: Paper[] = [], excludeTitles: string[] = [], signal?: AbortSignal): Promise<Paper[]> => {
+// 2. 获取聚合（推荐）流
+// 这里的逻辑已移除 AI，改为“随机组合用户关注的话题”
+export const fetchAggregatedPapers = async (topics: Topic[], excludeTitles: string[] = [], signal?: AbortSignal): Promise<Paper[]> => {
     if (topics.length === 0) return [];
 
-    // Strategy: 
-    // 1. "Subscription Feed": Pick 4 random topics to ensure diversity and rotation. 
-    //    Querying ALL topics at once creates massive queries that fail or return only the highest volume category.
+    // --- 策略：随机轮询 (Discovery through Rotation) ---
+    // 问题：不能一次查询所有 Topic（URL 会太长导致报错）。
+    // 解决：随机打乱用户的 Topic 列表，取前 5 个进行查询。
+    // 效果：用户每次刷新都能看到不同领域的组合，既新鲜又稳定。
+
     const shuffledTopics = [...topics].sort(() => 0.5 - Math.random());
-    const selectedTopics = shuffledTopics.slice(0, 4);
+    const selectedTopics = shuffledTopics.slice(0, 5); // 取 5 个随机话题
 
-    const subscriptionQueryParts = selectedTopics.map(t => buildTopicQuery(t));
-    const subscriptionQuery = subscriptionQueryParts.length > 0 ? `(${subscriptionQueryParts.join(" OR ")})` : "";
+    // 构建一个大的 OR 查询: (cat:cs.AI OR cat:math.CO OR ...)
+    const queryParts = selectedTopics.map(t => buildTopicQuery(t));
+    const finalQuery = queryParts.length > 0 ? `(${queryParts.join(" OR ")})` : "";
 
-    // 2. "Discovery Feed": Use AI to construct a smart query if we have bookmarks, otherwise skip.
-    //    We run this as a SEPARATE fetch to ensure the "Recommended" papers don't get drowned out by the "Subscribed" papers' volume.
-    let discoveryQuery: string | null = null;
-    if (!signal?.aborted && bookmarkedPapers.length > 0) {
-        // Only run AI if we have bookmarks to base it on, otherwise random rotation of topics is enough "exploration".
-        discoveryQuery = await getAiEnhancedQuery(topics, bookmarkedPapers);
-    }
+    // 执行查询，一次获取 20 条
+    const rawPapers = await executeArxivQuery(finalQuery, 0, 20, signal, "aggregated");
 
-    // 3. Execute Fetches in Parallel
-    // We fetch more results from Subscription (8) and fewer from Discovery (4) for a nice mix.
-    const [subResults, discoveryResults] = await Promise.all([
-        subscriptionQuery ? executeArxivQuery(subscriptionQuery, 0, 8, signal, "aggregated") : Promise.resolve([]),
-        discoveryQuery ? executeArxivQuery(discoveryQuery, 0, 4, signal, "ai_recommended") : Promise.resolve([])
-    ]);
-
-    // 4. Merge & Deduplicate
-    const allFetched = [...subResults, ...discoveryResults];
-    
-    // Tag AI papers so we could theoretically show them differently (optional, currently using generic card)
-    discoveryResults.forEach(p => p.topicId = "ai_recommended");
-
-    const uniquePapers: Paper[] = [];
+    // --- 去重逻辑 ---
     const seenTitles = new Set(excludeTitles.map(t => t.toLowerCase().replace(/[^a-z0-9]/g, '')));
+    const uniquePapers: Paper[] = [];
 
-    for (const p of allFetched) {
+    for (const p of rawPapers) {
         const nTitle = p.title.toLowerCase().replace(/[^a-z0-9]/g, '');
         if (!seenTitles.has(nTitle)) {
             seenTitles.add(nTitle);
@@ -361,7 +292,7 @@ export const fetchAggregatedPapers = async (topics: Topic[], bookmarkedPapers: P
         }
     }
 
-    // Sort combined result by date
+    // 最终按时间倒序
     return uniquePapers.sort((a, b) => 
         new Date(b.publishDate).getTime() - new Date(a.publishDate).getTime()
     );
